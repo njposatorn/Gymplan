@@ -1,5 +1,5 @@
 // Service worker: เก็บไฟล์แอปไว้ใช้ออฟไลน์ (ในยิมสัญญาณมักไม่ดี)
-const CACHE = 'gymplan-v1';
+const CACHE = 'gymplan-v2';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'js/data.js', 'js/engine.js', 'js/app.js',
