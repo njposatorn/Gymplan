@@ -21,6 +21,7 @@ function defaultState() {
     program: { split: 'ppl', next: 0 },
     sessions: [],
     bodyweight: [],
+    exUnits: {}, // หน่วยที่ตั้งแยกรายท่า เช่น { leg_press: 'lb' }
     active: null,
   };
 }
@@ -111,7 +112,8 @@ function renderOnboarding() {
 }
 
 function draftProfile() {
-  if (!ui.draft) ui.draft = state.profile ? { ...state.profile } : { level: 'beginner', goal: 'muscle', days: 3, minutes: 60 };
+  if (!ui.draft) ui.draft = state.profile ? { ...state.profile } : { level: 'beginner', goal: 'muscle', days: 3, minutes: 60, unit: 'kg' };
+  if (!ui.draft.unit) ui.draft.unit = 'kg';
   return ui.draft;
 }
 
@@ -128,6 +130,9 @@ function renderProfileForm() {
     ${radio('days', { 2: '2', 3: '3', 4: '4', 5: '5', 6: '6' }, p.days)}
     <label class="lbl">เวลาต่อครั้ง (นาที)</label>
     ${radio('minutes', { 30: '30', 45: '45', 60: '60', 75: '75', 90: '90' }, p.minutes)}
+    <label class="lbl">หน่วยน้ำหนัก</label>
+    ${radio('unit', { kg: 'กิโลกรัม (kg)', lb: 'ปอนด์ (lb)' }, p.unit)}
+    <p class="muted small">ถ้าเครื่องบางตัวในยิมเป็นอีกหน่วย กดสลับหน่วยแยกรายท่าได้ตอนเล่น</p>
   </section>`;
 }
 
@@ -330,6 +335,7 @@ function renderItem(it, idx) {
   const last = lastPerformance(it.exId, state.sessions);
   const allDone = it.sets.length && it.sets.every(s => s.done);
   const repLabel = ex.timed ? 'วินาที' : 'ครั้ง';
+  const unit = unitFor(state, it.exId);
   return `<section class="card item ${allDone ? 'done' : ''}" data-key="${it.key}">
     <div class="item-head">
       <div class="item-idx">${idx + 1}</div>
@@ -339,14 +345,14 @@ function renderItem(it, idx) {
       </div>
       <button class="icon-btn" data-act="item-menu" data-key="${it.key}" aria-label="ตัวเลือก">⋯</button>
     </div>
-    ${last ? `<div class="last small">ครั้งก่อน (${fmtDate(last.date)}): ${last.sets.map(s => `${ex.bw && !+s.w ? '' : fmtW(s.w) + '×'}${s.r}`).join(', ')}</div>` : ''}
+    ${last ? `<div class="last small">ครั้งก่อน (${fmtDate(last.date)}): ${last.sets.map(s => `${ex.bw && !+s.w ? '' : dispW(s.w, unit) + '×'}${s.r}`).join(', ')} ${unit}</div>` : ''}
     <div class="sug small ${it.suggestion.up ? 'up' : ''}">${it.suggestion.up ? '▲ ' : '💡 '}${esc(it.suggestion.text)}</div>
     <div class="sets">
-      <div class="set-row set-headrow"><span>เซ็ต</span><span>${ex.bw ? '+kg' : 'kg'}</span><span>${repLabel}</span><span></span></div>
+      <div class="set-row set-headrow"><span>เซ็ต</span><button class="unit-btn" data-act="unit-toggle" data-id="${it.exId}" aria-label="สลับหน่วยท่านี้">${ex.bw ? '+' : ''}${unit} ⇄</button><span>${repLabel}</span><span></span></div>
       ${it.sets.map((s, i) => `
       <div class="set-row ${s.done ? 'done' : ''}">
         <span class="set-n">${i + 1}</span>
-        <input class="input num" type="number" inputmode="decimal" step="any" min="0" value="${esc(s.w)}" placeholder="${ex.bw ? '0' : '-'}" data-input="set" data-key="${it.key}" data-i="${i}" data-f="w">
+        <input class="input num" type="number" inputmode="decimal" step="any" min="0" value="${s.w === '' || s.w == null ? '' : dispW(s.w, unit)}" placeholder="${ex.bw ? '0' : '-'}" data-input="set" data-key="${it.key}" data-i="${i}" data-f="w">
         <input class="input num" type="number" inputmode="numeric" min="0" value="${esc(s.r)}" placeholder="${it.rx.hi}" data-input="set" data-key="${it.key}" data-i="${i}" data-f="r">
         <button class="tick ${s.done ? 'on' : ''}" data-act="set-done" data-key="${it.key}" data-i="${i}" aria-label="เสร็จเซ็ตนี้">✓</button>
       </div>`).join('')}
@@ -433,7 +439,10 @@ function toggleSetDone(key, i) {
     const prevBest = bestE1rm(it.exId, state.sessions);
     const cur = e1rm(s.w, s.r);
     const sessionBestBefore = Math.max(0, ...it.sets.filter((x, j) => j !== i && x.done).map(x => e1rm(x.w, x.r)));
-    if (prevBest > 0 && cur > prevBest && cur > sessionBestBefore) toast(`🎉 PR ใหม่! ${ex.name} ≈ ${fmtW(Math.round(cur * 10) / 10)} kg (1RM)`, 3500);
+    if (prevBest > 0 && cur > prevBest && cur > sessionBestBefore) {
+      const u = unitFor(state, it.exId);
+      toast(`🎉 PR ใหม่! ${ex.name} ≈ ${fmtW(Math.round(toDisp(cur, u) * 10) / 10)} ${u} (1RM)`, 3500);
+    }
     startRest(it.rx.rest);
   } else {
     s.done = false;
@@ -480,7 +489,7 @@ function finishWorkout() {
     <div class="stats">
       <div class="stat"><span class="num">${fmtTime(session.duration)}</span><span class="muted small">นาที</span></div>
       <div class="stat"><span class="num">${sets}</span><span class="muted small">เซ็ต</span></div>
-      <div class="stat"><span class="num">${fmtNum(volume)}</span><span class="muted small">kg รวม</span></div>
+      <div class="stat"><span class="num">${fmtNum(toDisp(volume, unitFor(state)))}</span><span class="muted small">${unitFor(state)} รวม</span></div>
     </div>
     ${prs.length ? `<div class="pr-box">🎉 PR ใหม่: ${prs.map(esc).join(', ')}</div>` : ''}
   </div>
@@ -543,13 +552,13 @@ function renderHistory() {
     const muscles = [...new Set(s.items.map(it => EX_BY_ID[it.exId]?.muscle).filter(Boolean))];
     return `<section class="card session">
       <button class="session-head" data-act="session-toggle" data-id="${s.id}">
-        <div><b>${esc(s.title)}</b><div class="muted small">${fmtDay(s.date)} · ${fmtTime(s.duration)} นาที · ${fmtNum(volume)} kg</div>
+        <div><b>${esc(s.title)}</b><div class="muted small">${fmtDay(s.date)} · ${fmtTime(s.duration)} นาที · ${fmtNum(toDisp(volume, unitFor(state)))} ${unitFor(state)}</div>
         <div class="chips small-chips">${muscles.map(m => muscleChip(m)).join('')}</div></div>
         <span class="chev ${open ? 'open' : ''}">›</span>
       </button>
       ${open ? `<div class="session-body">
         ${s.items.map(it => { const ex = EX_BY_ID[it.exId]; return `<div class="hist-ex"><b>${esc(ex?.name || it.exId)}</b>
-          <div class="muted small">${it.sets.map(x => `${ex?.bw && !x.w ? '' : fmtW(x.w) + ' kg × '}${x.r}`).join(' · ')}</div></div>`; }).join('')}
+          <div class="muted small">${it.sets.map(x => `${ex?.bw && !x.w ? '' : dispW(x.w, unitFor(state, it.exId)) + ' ' + unitFor(state, it.exId) + ' × '}${x.r}`).join(' · ')}</div></div>`; }).join('')}
         <button class="btn small danger mt" data-act="session-delete" data-id="${s.id}">ลบรายการนี้</button>
       </div>` : ''}
     </section>`;
@@ -563,6 +572,7 @@ function renderProgress() {
   if (!ui.progressEx || !done.includes(ui.progressEx)) ui.progressEx = done[done.length - 1] || null;
   const perMuscle = setsPerMuscleThisWeek(state.sessions);
   const maxSets = Math.max(20, ...Object.values(perMuscle));
+  const bwUnit = unitFor(state);
 
   let exBlock = `<section class="card empty"><p>ยังไม่มีข้อมูล</p><p class="muted small">เล่นให้ครบสักครั้ง แล้วกราฟจะขึ้นที่นี่</p></section>`;
   if (ui.progressEx) {
@@ -575,20 +585,22 @@ function renderProgress() {
     const best = rows.reduce((b, r) => r[m] > b[m] ? r : b, rows[0]);
     const first = rows[0], lastR = rows[rows.length - 1];
     const change = first[m] ? (lastR[m] - first[m]) / first[m] * 100 : 0;
-    const unit = m === 'reps' ? 'ครั้ง' : 'kg';
+    const u = unitFor(state, ui.progressEx);
+    const unit = m === 'reps' ? 'ครั้ง' : u;
+    const conv = x => m === 'reps' ? x : toDisp(x, u);
     exBlock = `<section class="card">
       <select class="input" data-input="progress-ex">${done.map(id => `<option value="${id}" ${id === ui.progressEx ? 'selected' : ''}>${esc(EX_BY_ID[id].name)}</option>`).join('')}</select>
       <div class="seg mt">${Object.entries(metrics).map(([k, v]) => `<button class="${m === k ? 'on' : ''}" data-act="metric" data-v="${k}">${v}</button>`).join('')}</div>
       <div class="kpis">
-        <div><span class="muted small">ล่าสุด</span><b>${fmtW(Math.round(lastR[m] * 10) / 10)} <small>${unit}</small></b></div>
-        <div><span class="muted small">ดีที่สุด</span><b>${fmtW(Math.round(best[m] * 10) / 10)} <small>${unit}</small></b></div>
+        <div><span class="muted small">ล่าสุด</span><b>${fmtW(Math.round(conv(lastR[m]) * 10) / 10)} <small>${unit}</small></b></div>
+        <div><span class="muted small">ดีที่สุด</span><b>${fmtW(Math.round(conv(best[m]) * 10) / 10)} <small>${unit}</small></b></div>
         <div><span class="muted small">เปลี่ยนแปลง</span><b class="${change >= 0 ? 'pos' : 'neg'}">${change >= 0 ? '+' : ''}${change.toFixed(0)}%</b></div>
       </div>
-      ${lineChart(rows.map(r => ({ x: r.date, y: r[m] })), unit)}
+      ${lineChart(rows.map(r => ({ x: r.date, y: conv(r[m]) })), unit)}
       ${m === 'e1rm' ? '<p class="muted small">1RM โดยประมาณ = น้ำหนัก × (1 + ครั้ง ÷ 30) ใช้เทียบความแข็งแรงแม้จำนวนครั้งไม่เท่ากัน</p>' : ''}
       <details class="mt"><summary class="small">ดูเป็นตาราง</summary>
         <table class="tbl"><thead><tr><th>วันที่</th><th>เซ็ต</th><th>${metrics[m]}</th></tr></thead><tbody>
-        ${[...rows].reverse().map(r => `<tr><td>${fmtDate(r.date)}</td><td>${r.sets.map(s => `${ex.bw && !s.w ? '' : fmtW(s.w) + '×'}${s.r}`).join(', ')}</td><td>${fmtW(Math.round(r[m] * 10) / 10)}</td></tr>`).join('')}
+        ${[...rows].reverse().map(r => `<tr><td>${fmtDate(r.date)}</td><td>${r.sets.map(s => `${ex.bw && !s.w ? '' : dispW(s.w, u) + '×'}${s.r}`).join(', ')}</td><td>${fmtW(Math.round(conv(r[m]) * 10) / 10)}</td></tr>`).join('')}
         </tbody></table></details>
     </section>`;
   }
@@ -608,10 +620,10 @@ function renderProgress() {
   <section class="card">
     <h3>น้ำหนักตัว</h3>
     <div class="row gap">
-      <input class="input num grow" type="number" inputmode="decimal" step="0.1" placeholder="kg" id="bw-input">
+      <input class="input num grow" type="number" inputmode="decimal" step="0.1" placeholder="${bwUnit}" id="bw-input">
       <button class="btn primary" data-act="bw-add">บันทึก</button>
     </div>
-    ${state.bodyweight.length >= 2 ? lineChart(state.bodyweight.map(b => ({ x: b.date, y: b.kg })), 'kg') : state.bodyweight.length ? `<p class="muted small mt">ล่าสุด ${fmtW(state.bodyweight[0].kg)} kg (${fmtDate(state.bodyweight[0].date)})</p>` : '<p class="muted small mt">บันทึกอย่างน้อย 2 ครั้งเพื่อดูกราฟ</p>'}
+    ${state.bodyweight.length >= 2 ? lineChart(state.bodyweight.map(b => ({ x: b.date, y: toDisp(b.kg, bwUnit) })), bwUnit) : state.bodyweight.length ? `<p class="muted small mt">ล่าสุด ${dispW(state.bodyweight[0].kg, bwUnit)} ${bwUnit} (${fmtDate(state.bodyweight[0].date)})</p>` : '<p class="muted small mt">บันทึกอย่างน้อย 2 ครั้งเพื่อดูกราฟ</p>'}
   </section>`;
 }
 
@@ -672,7 +684,7 @@ function renderSettings() {
   const gym = currentGym(state);
   return `<h1 class="page-title">ตั้งค่า</h1>
   <section class="card list">
-    <button class="list-item" data-act="settings-open" data-id="profile"><span>ข้อมูลของคุณ</span><span class="muted small">${esc(LEVELS[p.level].name)} · ${esc(GOALS[p.goal].name)} ›</span></button>
+    <button class="list-item" data-act="settings-open" data-id="profile"><span>ข้อมูลของคุณ</span><span class="muted small">${esc(LEVELS[p.level].name)} · ${esc(GOALS[p.goal].name)} · ${unitFor(state)} ›</span></button>
     <button class="list-item" data-act="settings-open" data-id="split"><span>รูปแบบโปรแกรม</span><span class="muted small">${esc(SPLITS[state.program.split].name)} ›</span></button>
     <button class="list-item" data-act="settings-open" data-id="exclusions"><span>ท่าที่ไม่เล่น</span><span class="muted small">${activeExclusions(state.exclusions).length} รายการ ›</span></button>
   </section>
@@ -810,6 +822,23 @@ document.addEventListener('click', e => {
     'add-muscle': () => openAddSheet(id),
     'add-pick': () => { state.active.items.push(makeItem(EX_BY_ID[id], state)); save(); closeSheet(); render(); },
     'set-done': () => toggleSetDone(key, i),
+    'unit-toggle': () => {
+      const next = unitFor(state, id) === 'kg' ? 'lb' : 'kg';
+      state.exUnits = state.exUnits || {};
+      if (next === (state.profile.unit || 'kg')) delete state.exUnits[id];
+      else state.exUnits[id] = next;
+      // คำแนะนำน้ำหนักคำนวณใหม่ตามหน่วย (ค่าที่กรอกไว้แปลงให้อัตโนมัติ)
+      state.active.items.filter(x => x.exId === id).forEach(x => {
+        const old = x.suggestion.weight;
+        x.suggestion = suggestion(EX_BY_ID[id], x.rx, lastPerformance(id, state.sessions), next);
+        // เซ็ตที่ยังไม่ได้แก้น้ำหนักเอง ให้ใช้น้ำหนักแนะนำของหน่วยใหม่ (เช่น 50 lb → 22.5 kg)
+        if (old != null && x.suggestion.weight != null) {
+          x.sets.forEach(s => { if (!s.done && s.w !== '' && Math.abs(+s.w - old) < 1e-6) s.w = x.suggestion.weight; });
+        }
+      });
+      save(); render();
+      toast(`${EX_BY_ID[id].name}: ใช้หน่วย ${next} (จำไว้สำหรับครั้งหน้า)`);
+    },
     'set-add': () => { const it = findItem(key); const l = it.sets[it.sets.length - 1]; it.sets.push({ w: l ? l.w : '', r: l ? l.r : '', done: false }); save(); render(); },
     'set-remove': () => { findItem(key).sets.pop(); save(); render(); },
     'item-menu': () => openItemMenu(key),
@@ -847,7 +876,7 @@ document.addEventListener('click', e => {
     'bw-add': () => {
       const val = +document.getElementById('bw-input').value;
       if (!val) return;
-      state.bodyweight.push({ date: Date.now(), kg: val });
+      state.bodyweight.push({ date: Date.now(), kg: fromDisp(val, unitFor(state)) });
       state.bodyweight.sort((a, b) => a.date - b.date);
       save(); render(); toast('บันทึกน้ำหนักตัวแล้ว');
     },
@@ -885,7 +914,12 @@ document.addEventListener('input', e => {
   const t = el.dataset.input;
   if (t === 'set') {
     const it = findItem(el.dataset.key);
-    if (it) { it.sets[+el.dataset.i][el.dataset.f] = el.value; save(); }
+    if (it) {
+      const f = el.dataset.f;
+      // น้ำหนักเก็บเป็น kg เสมอ แปลงจากหน่วยที่กรอก
+      it.sets[+el.dataset.i][f] = f === 'w' && el.value !== '' ? fromDisp(el.value, unitFor(state, it.exId)) : el.value;
+      save();
+    }
   } else if (t === 'gym-name') {
     currentGym(state).name = el.value; save();
   } else if (t === 'ex-search') {

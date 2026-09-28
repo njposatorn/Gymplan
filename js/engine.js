@@ -146,7 +146,7 @@ function buildWorkout(state, slotStrings, title, dayRef) {
 function makeItem(ex, state) {
   const rx = prescription(ex, state.profile);
   const last = lastPerformance(ex.id, state.sessions);
-  const sug = suggestion(ex, rx, last);
+  const sug = suggestion(ex, rx, last, unitFor(state, ex.id));
   const sets = [];
   for (let i = 0; i < rx.sets; i++) {
     const prev = last && last.sets[i];
@@ -183,14 +183,43 @@ function lastPerformance(exId, sessions) {
   return null;
 }
 
-function weightStep(ex) {
+// ---------- หน่วยน้ำหนัก: เก็บเป็น kg เสมอ แปลงเฉพาะตอนแสดง/กรอก ----------
+
+const LB = 0.45359237;
+
+function unitFor(state, exId) {
+  return (exId && state.exUnits && state.exUnits[exId]) || (state.profile && state.profile.unit) || 'kg';
+}
+
+function toDisp(kg, unit) {
+  return unit === 'lb' ? +kg / LB : +kg;
+}
+
+function fromDisp(v, unit) {
+  return unit === 'lb' ? +v * LB : +v;
+}
+
+function dispW(kg, unit) {
+  const v = toDisp(kg, unit);
+  return unit === 'lb' ? String(Math.round(v * 10) / 10) : fmtW(v);
+}
+
+// ปัดให้ตรงกับน้ำหนักที่มีจริงในยิม: kg ทีละ 0.25, lb ทีละ 0.5
+function roundDisp(v, unit) {
+  const g = unit === 'lb' ? 0.5 : 0.25;
+  return Math.round(v / g) * g;
+}
+
+// ขั้นการเพิ่มน้ำหนัก (หน่วยตามที่แสดง)
+function weightStep(ex, unit) {
+  if (unit === 'lb') return 5;
   if (ex.equip.some(r => r.includes('kettlebell')) && !ex.equip.some(r => r.includes('dumbbell'))) return 4;
   if (ex.equip.some(r => r.startsWith('dumbbell'))) return 2;
   return 2.5;
 }
 
 // progressive overload: ครั้งก่อนทำครบทุกเซ็ตถึงจำนวนครั้งสูงสุด → เพิ่มน้ำหนัก
-function suggestion(ex, rx, last) {
+function suggestion(ex, rx, last, unit = 'kg') {
   if (!last) return { weight: null, text: 'ครั้งแรก เริ่มจากน้ำหนักที่ทำได้ ' + rx.hi + ' ครั้งแบบยังเหลือแรง 2–3 ครั้ง' };
   const weights = last.sets.map(s => +s.w || 0);
   const topW = Math.max(...weights);
@@ -201,10 +230,10 @@ function suggestion(ex, rx, last) {
       : { weight: 0, text: 'พยายามเพิ่มจำนวนครั้งจากครั้งก่อน' };
   }
   if (hitAll) {
-    const w = +(topW + weightStep(ex)).toFixed(2);
-    return { weight: w, up: true, text: `ครั้งก่อนทำครบ ${rx.hi} ครั้งทุกเซ็ต → เพิ่มเป็น ${fmtW(w)} kg` };
+    const w = fromDisp(roundDisp(toDisp(topW, unit) + weightStep(ex, unit), unit), unit);
+    return { weight: w, up: true, text: `ครั้งก่อนทำครบ ${rx.hi} ครั้งทุกเซ็ต → เพิ่มเป็น ${dispW(w, unit)} ${unit}` };
   }
-  return { weight: topW, text: `ใช้ ${fmtW(topW)} kg ต่อ ทำให้ครบ ${rx.hi} ครั้งทุกเซ็ตแล้วค่อยเพิ่ม` };
+  return { weight: topW, text: `ใช้ ${dispW(topW, unit)} ${unit} ต่อ ทำให้ครบ ${rx.hi} ครั้งทุกเซ็ตแล้วค่อยเพิ่ม` };
 }
 
 function bestE1rm(exId, sessions, beforeTs = Infinity) {
